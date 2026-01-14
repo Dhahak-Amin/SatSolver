@@ -28,6 +28,7 @@ namespace sat {
      */
     class  Variable {
         //@TODO Private members here
+        unsigned val;
     public:
         /**
          * CTor
@@ -55,6 +56,7 @@ namespace sat {
      */
     class Literal {
         //@TODO Private members here
+        unsigned val;
     public:
         /**
          * CTor

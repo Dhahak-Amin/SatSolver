@@ -9,6 +9,7 @@
 #define SOLVER_HPP
 
 #include <memory>
+#include <vector>
 
 #include "basic_structures.hpp"
 #include "Clause.hpp"
@@ -29,6 +30,18 @@ namespace sat {
      */
     class Solver {
         // @TODO private members here
+        unsigned numVariables;
+        std::vector<TruthValue> model;
+
+        // All non-unit clauses stored once (no duplicates by copying)
+        std::vector<ClausePointer> clauses;
+
+        // All unit literals (from unit clauses / propagation)
+        std::vector<Literal> unitLiterals;
+
+        // une Watch lists: for each literal id, store clauses currently watching this literal ( to be checked)
+        std::vector<std::vector<ClausePointer>> watchLists;
+
     public:
 
         /**

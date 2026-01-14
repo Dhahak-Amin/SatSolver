@@ -33,7 +33,7 @@ namespace sat::detail {
 
 namespace sat::inout {
     Literal from_dimacs(int val) noexcept {
-        Variable tmp = std::abs(val) - 1;
+        Variable tmp = std::abs(val) - 1u;
         return Literal(val < 0 ? neg(tmp) : pos(tmp));
     }
 
