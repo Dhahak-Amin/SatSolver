@@ -9,6 +9,7 @@
 #include <cassert>
 #include "Solver.hpp"
 #include "util/exception.hpp"
+#include "heuristics.hpp"
 
 namespace sat {
     Solver::Solver(unsigned numVariables)
@@ -16,54 +17,94 @@ namespace sat {
           model(numVariables, TruthValue::Undefined),
           watchLists(2u * numVariables) {}
 
-    bool Solver::addClause(Clause clause) {
-   
-        if (clause.isEmpty()) return false;
-
-        std::vector<Literal> newLits;
-        newLits.reserve(clause.size());
-
-        for (auto l : clause) {
-            if (satisfied(l)) {
-                return true; 
-            }
-            if (!falsified(l)) {
-                newLits.emplace_back(l); 
-            }
-        }
-
-        if (newLits.empty()) {
-            return false;
-        }
-
-        if (newLits.size() == 1) {
-            // unit clause
-            Literal u = newLits[0];
-            if (falsified(u)) return false;
-
-            if (!assign(u)) return false;
-
-            auto it = std::find(unitLiterals.begin(), unitLiterals.end(), u);
-            if (it == unitLiterals.end()) unitLiterals.emplace_back(u);
-
-            return unitPropagate();
-        }
-
-        ClausePointer cptr = std::make_shared<Clause>(Clause(std::move(newLits)));
-
-        clauses.emplace_back(cptr);
-
-        // register watchers in watch lists
-        Literal w0 = cptr->getWatcherByRank(0);
-        Literal w1 = cptr->getWatcherByRank(1);
-
-        watchLists[w0.get()].push_back(cptr);
-        if (!(w1 == w0)) {
-            watchLists[w1.get()].push_back(cptr);
-        }
-
-        return unitPropagate();
+     bool Solver::solve() {
+        return dpll();
     }
+
+    bool Solver::dpll() {
+        //  unit propagate
+        if (!unitPropagate()) return false;
+
+        // check sii all variables assigned
+        std::size_t open = 0;
+        for (auto v : model) {
+            if (v == TruthValue::Undefined) ++open;
+        }
+        if (open == 0) {
+            return true;
+        }
+
+        //hoose next variable  pour le moment avec le (FirstVariable heuristic)
+        FirstVariable h;
+        Variable x = h(model, open);
+
+        // 4) brancher sur  x = True
+        {
+            Solver s1 = clone();
+            if (s1.assign(pos(x)) && s1.dpll()) {
+                *this = std::move(s1);
+                return true;
+            }
+        }
+
+        {
+            Solver s2 = clone();
+            if (s2.assign(neg(x)) && s2.dpll()) {
+                *this = std::move(s2);
+                return true;
+            }
+        }
+
+        return false;
+    }      
+
+    bool Solver::addClause(Clause clause) {
+
+    if (clause.isEmpty()) return false;
+
+    std::vector<Literal> newLits;
+    newLits.reserve(clause.size());
+
+    for (auto l : clause) {
+        if (satisfied(l)) {
+            return true;
+        }
+        if (!falsified(l)) {
+            newLits.emplace_back(l);
+        }
+    }
+
+    if (newLits.empty()) {
+        return false;
+    }
+
+    if (newLits.size() == 1) {
+        // unit clause
+        Literal u = newLits[0];
+
+        auto it = std::find(unitLiterals.begin(), unitLiterals.end(), u);
+        if (it == unitLiterals.end()) unitLiterals.emplace_back(u);
+
+        if (falsified(u)) return false;
+
+        return true;
+    }
+
+    ClausePointer cptr = std::make_shared<Clause>(Clause(std::move(newLits)));
+
+    clauses.emplace_back(cptr);
+
+    // register watchers in watch lists
+    Literal w0 = cptr->getWatcherByRank(0);
+    Literal w1 = cptr->getWatcherByRank(1);
+
+    watchLists[w0.get()].push_back(cptr);
+    if (!(w1 == w0)) {
+        watchLists[w1.get()].push_back(cptr);
+    }
+    return true;
+}
+
 
     /**
      * Here you have a possible implementation of the rebase-method. It should work out of the box.
@@ -133,87 +174,126 @@ namespace sat {
     }
 
     bool Solver::assign(Literal l) {
-        Variable x = var(l);
-        assert(x.get() < numVariables);
+    Variable x = var(l);
+    assert(x.get() < numVariables);
 
-        if (falsified(l)) return false;
+    if (falsified(l)) return false;
 
-        if (satisfied(l)) return true;
+    if (satisfied(l)) return true;
 
-        model[x.get()] = (l.sign() > 0) ? TruthValue::True : TruthValue::False;
-        return true;
-    }
+    model[x.get()] = (l.sign() > 0) ? TruthValue::True : TruthValue::False;
+
+    // store assignment as unit literal (tests expect this)
+    auto it = std::find(unitLiterals.begin(), unitLiterals.end(), l);
+    if (it == unitLiterals.end()) unitLiterals.emplace_back(l);
+
+    return true;
+}
 
     bool Solver::unitPropagate() {
-        std::vector<Literal> queue = unitLiterals;
-        std::size_t qHead = 0;
+    std::vector<Literal> queue = unitLiterals;
+    std::size_t qHead = 0;
 
-        while (qHead < queue.size()) {
-            Literal l = queue[qHead++];
-            
-            Literal falselit = l.negate();
-            auto &watchVec = watchLists[falselit.get()];
+    while (qHead < queue.size()) {
+        Literal l = queue[qHead++];
 
-            std::size_t i = 0;
-            while (i < watchVec.size()) {
-                ClausePointer c = watchVec[i];
+        if (!assign(l)) return false;
 
-                // Identify which watcher is the falsified one 
-                short rank = c->getRank(falselit);
-                //  If for some reason it's not a watcher anymore, skip it
-                if (rank == -1) {
-                    ++i;
-                    continue;
+        Literal falselit = l.negate();
+        auto &watchVec = watchLists[falselit.get()];
+
+        std::size_t i = 0;
+        while (i < watchVec.size()) {
+            ClausePointer c = watchVec[i];
+
+            short rank = c->getRank(falselit);
+            if (rank == -1) {
+                ++i;
+                continue;
+            }
+
+            short otherRank = (rank == 0) ? 1 : 0;
+            Literal other = c->getWatcherByRank(otherRank);
+
+            // If the other watcher is satisfied, clause is satisfied
+            if (satisfied(other)) {
+                ++i;
+                continue;
+            }
+
+            // Try to find a replacement watcher that is not falsified
+            bool moved = false;
+            for (auto cand : *c) {
+                if (cand == other) continue;
+                if (cand == falselit) continue;
+
+                if (!falsified(cand)) {
+                    bool ok = c->setWatcher(cand, rank);
+                    (void)ok;
+                    watchVec[i] = watchVec.back();
+                    watchVec.pop_back();
+                    watchLists[cand.get()].push_back(c);
+                    moved = true;
+                    break;
                 }
+            }
 
-                short otherRank = (rank == 0) ? 1 : 0;
-                Literal other = c->getWatcherByRank(otherRank);
+            if (moved) {
+                continue;
+            }
 
-                // If the other watcher is satisfied, clause is satisfied
-                if (satisfied(other)) {
-                    ++i;
-                    continue;
-                }
+            if (falsified(other)) {
+                return false;
+            }
 
-                // Try to find a replacement watcher that is not falsified
-                bool moved = false;
-                for (auto cand : *c) {
-                    if (cand == other) continue;
-                    if (cand == falselit) continue;
+            if (!assign(other)) return false;
 
-                    if (!falsified(cand)) {
-                        bool ok = c->setWatcher(cand, rank);
-                        (void)ok;
-                        watchVec[i] = watchVec.back();
-                        watchVec.pop_back();
-                        watchLists[cand.get()].push_back(c);
-                        moved = true;
-                        break;
-                    }
-                }
+            queue.push_back(other);
 
-                if (moved) {
-                    // do not increment i because we swapped in a new element
-                    continue;
-                }
+            ++i;
+        }
+    }
 
-                // No replacement found => clause is unit or conflict TBD ??
-                if (falsified(other)) {
-                    // both watchers falsified => conflict
-                    return false;
-                }
+    return true;
+}
 
-                if (!assign(other)) return false;
+ /*
+     * IMPORTANT:
+     * Clause objects contain mutable watcher indices. Therefore, we must deep-copy clauses for branching,
+     * otherwise different branches share the same Clause instances and interfere.
+     */
+    Solver Solver::clone() const {
+        Solver s(numVariables);
+        s.model = model;
+        s.unitLiterals = unitLiterals;
 
-                auto it = std::find(unitLiterals.begin(), unitLiterals.end(), other);
-                if (it == unitLiterals.end()) unitLiterals.emplace_back(other);
+        // recreate clauses with new Clause instances
+        s.clauses.reserve(clauses.size());
+        for (const auto &cp : clauses) {
+            ClausePointer np = std::make_shared<Clause>(*cp); // deep copy Clause (literals + watcher indices)
+            s.clauses.emplace_back(np);
+        }
 
-                queue.push_back(other);
-
-                ++i; 
+        // rebuild watchLists
+        s.watchLists.assign(2u * numVariables, {});
+        for (const auto &cp : s.clauses) {
+            if (cp->isEmpty()) continue;
+            Literal w0 = cp->getWatcherByRank(0);
+            Literal w1 = cp->getWatcherByRank(1);
+            s.watchLists[w0.get()].push_back(cp);
+            if (!(w1 == w0)) {
+                s.watchLists[w1.get()].push_back(cp);
             }
         }
 
-        return true;
+        return s;
     }
+    std::vector<Literal> Solver::getUnitLiterals() const {
+    return unitLiterals;
+    }
+
+
+   
+
+
 } // sat

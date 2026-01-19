@@ -42,6 +42,9 @@ namespace sat {
         // une Watch lists: for each literal id, store clauses currently watching this literal ( to be checked)
         std::vector<std::vector<ClausePointer>> watchLists;
 
+        Solver clone() const;
+        bool dpll();
+
     public:
 
         /**
@@ -108,6 +111,15 @@ namespace sat {
          * @return true if unit propagation was successful, false otherwise
          */
         bool unitPropagate();
+        /**
+         /**
+         * Solves the SAT instance using a simple DPLL loop (FirstVariable heuristic)
+         * @return true if satisfiable, false otherwise
+         */
+        bool solve();
+
+        std::vector<Literal> getUnitLiterals() const;
+
 
     };
 } // sat
