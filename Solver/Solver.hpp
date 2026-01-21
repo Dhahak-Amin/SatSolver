@@ -13,6 +13,7 @@
 
 #include "basic_structures.hpp"
 #include "Clause.hpp"
+#include "heuristics.hpp"
 
 namespace sat {
     /*
@@ -23,7 +24,7 @@ namespace sat {
      */
     using ClausePointer = std::shared_ptr<Clause>;
     using ConstClausePointer = std::shared_ptr<const Clause>;
-
+        enum class SolveStatus { Sat, Unsat, Restart };
 
     /**
      * @brief Main solver class
@@ -43,7 +44,12 @@ namespace sat {
         std::vector<std::vector<ClausePointer>> watchLists;
 
         Solver clone() const;
-        bool dpll();
+        std::vector<Variable> lastConflictVars;
+
+        SolveStatus dpll(WeightedDegree &h, std::size_t &decisionBudget);        
+        bool dpllFirstVariable();
+
+
 
     public:
 
@@ -111,7 +117,6 @@ namespace sat {
          * @return true if unit propagation was successful, false otherwise
          */
         bool unitPropagate();
-        /**
          /**
          * Solves the SAT instance using a simple DPLL loop (FirstVariable heuristic)
          * @return true if satisfiable, false otherwise
@@ -119,6 +124,13 @@ namespace sat {
         bool solve();
 
         std::vector<Literal> getUnitLiterals() const;
+        /**
+         * Solves the SAT instance using a simple DPLL loop (FirstVariable heuristic)
+         * @return true if satisfiable, false otherwise
+         */
+        bool solveFirstVariable();
+
+
 
 
     };

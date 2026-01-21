@@ -12,51 +12,102 @@
 #include "heuristics.hpp"
 
 namespace sat {
-    Solver::Solver(unsigned numVariables)
+    
+
+    static std::size_t luby(std::size_t i) {
+        std::size_t k = 1;
+        while ((1ULL << k) - 1 < i) ++k;
+        while (i != (1ULL << k) - 1) {
+            i = i - ((1ULL << (k - 1)) - 1);
+            k = 1;
+            while ((1ULL << k) - 1 < i) ++k;
+        }
+        return 1ULL << (k - 1);
+    }
+    
+   
+
+    SolveStatus Solver::dpll(WeightedDegree &h, std::size_t &decisionBudget) {
+    if (!unitPropagate()) {
+        if (!lastConflictVars.empty()) {
+            h.onConflict(lastConflictVars);
+        }
+        return SolveStatus::Unsat;
+    }
+
+    std::size_t open = 0;
+    for (auto v : model) {
+        if (v == TruthValue::Undefined) ++open;
+    }
+    if (open == 0) {
+        return SolveStatus::Sat;
+    }
+
+    if (decisionBudget == 0) {
+        return SolveStatus::Restart;
+    }
+
+    Variable x = h(model, open);
+    --decisionBudget;
+
+    // branch True
+    {
+        Solver s1 = clone();
+        if (s1.assign(pos(x))) {
+            SolveStatus st = s1.dpll(h, decisionBudget);
+            if (st == SolveStatus::Sat) { *this = std::move(s1); return SolveStatus::Sat; }
+            if (st == SolveStatus::Restart) return SolveStatus::Restart;
+        }
+    }
+
+    // branch False
+    {
+        Solver s2 = clone();
+        if (s2.assign(neg(x))) {
+            SolveStatus st = s2.dpll(h, decisionBudget);
+            if (st == SolveStatus::Sat) { *this = std::move(s2); return SolveStatus::Sat; }
+            if (st == SolveStatus::Restart) return SolveStatus::Restart;
+        }
+    }
+
+    return SolveStatus::Unsat;
+}
+
+
+ Solver::Solver(unsigned numVariables)
         : numVariables(numVariables),
           model(numVariables, TruthValue::Undefined),
           watchLists(2u * numVariables) {}
 
      bool Solver::solve() {
-        return dpll();
-    }
+    Solver base = clone();
+    WeightedDegree h(numVariables, 1.0, 0.95);
 
-    bool Solver::dpll() {
-        //  unit propagate
-        if (!unitPropagate()) return false;
+    const std::size_t baseBudget = 200;
+    const std::size_t maxRestarts = 50;
 
-        // check sii all variables assigned
-        std::size_t open = 0;
-        for (auto v : model) {
-            if (v == TruthValue::Undefined) ++open;
-        }
-        if (open == 0) {
+    for (std::size_t r = 1; r <= maxRestarts; ++r) {
+        Solver attempt = base.clone();
+        std::size_t budget = baseBudget * luby(r);
+
+        SolveStatus st = attempt.dpll(h, budget);
+
+        if (st == SolveStatus::Sat) {
+            *this = std::move(attempt);
             return true;
         }
-
-        //hoose next variable  pour le moment avec le (FirstVariable heuristic)
-        FirstVariable h;
-        Variable x = h(model, open);
-
-        // 4) brancher sur  x = True
-        {
-            Solver s1 = clone();
-            if (s1.assign(pos(x)) && s1.dpll()) {
-                *this = std::move(s1);
-                return true;
-            }
+        if (st == SolveStatus::Unsat) {
+            return false;
         }
 
-        {
-            Solver s2 = clone();
-            if (s2.assign(neg(x)) && s2.dpll()) {
-                *this = std::move(s2);
-                return true;
-            }
-        }
+        // restart
+        h.decay();
+    }
 
-        return false;
-    }      
+    return false;
+}
+
+
 
     bool Solver::addClause(Clause clause) {
 
@@ -193,6 +244,8 @@ namespace sat {
     bool Solver::unitPropagate() {
     std::vector<Literal> queue = unitLiterals;
     std::size_t qHead = 0;
+    lastConflictVars.clear();
+
 
     while (qHead < queue.size()) {
         Literal l = queue[qHead++];
@@ -243,8 +296,15 @@ namespace sat {
             }
 
             if (falsified(other)) {
+                // conflict: store vars from conflicting clause for heuristic update
+                lastConflictVars.clear();
+                lastConflictVars.reserve(c->size());
+                for (auto lit : *c) {
+                    lastConflictVars.emplace_back(var(lit));
+                }
                 return false;
             }
+
 
             if (!assign(other)) return false;
 
@@ -291,6 +351,51 @@ namespace sat {
     std::vector<Literal> Solver::getUnitLiterals() const {
     return unitLiterals;
     }
+        
+    bool Solver::solveFirstVariable() {
+    return dpllFirstVariable();
+}
+
+bool Solver::dpllFirstVariable() {
+    // 1) Unit propagation
+    if (!unitPropagate()) return false;
+
+    // 2) Check if all assigned
+    std::size_t open = 0;
+    for (auto v : model) {
+        if (v == TruthValue::Undefined) ++open;
+    }
+    if (open == 0) return true;
+
+    // 3) Choose next variable (FirstVariable)
+    FirstVariable hv;
+    Variable x = hv(model, open);
+
+    // 4) Branch True
+    {
+        Solver s1 = clone();
+        if (s1.assign(pos(x)) && s1.dpllFirstVariable()) {
+            *this = std::move(s1);
+            return true;
+        }
+    }
+
+    // 5) Branch False
+    {
+        Solver s2 = clone();
+        if (s2.assign(neg(x)) && s2.dpllFirstVariable()) {
+            *this = std::move(s2);
+            return true;
+        }
+    }
+
+    return false;
+}
+
+
+
+        
+
 
 
    

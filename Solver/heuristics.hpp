@@ -117,6 +117,34 @@ namespace sat {
             return h->operator()(values, numOpenVariables);
         }
     };
+
+        /**
+     * @brief Dynamic heuristic: Weighted Degree (simple version)
+     * @details
+     * Keeps a weight per variable. On conflicts, weights of variables involved are increased.
+     * Next decision variable = unassigned var with maximum weight (tie -> smallest id).
+     */
+    struct WeightedDegree {
+        std::vector<double> weight;
+        double bumpAmount = 1.0;
+        double decayFactor = 0.95;
+
+        explicit WeightedDegree(std::size_t numVars, double bump = 1.0, double decay = 0.95)
+            : weight(numVars, 1.0), bumpAmount(bump), decayFactor(decay) {}
+
+        Variable operator()(const std::vector<TruthValue> &model, std::size_t) const;
+
+        
+        void onConflict(const std::vector<Variable> &vars);
+
+        
+        void decay();
+    };
+
+
+    
+
+
 }
 
 #endif //HEURISTICS_HPP
